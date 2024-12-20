@@ -17,6 +17,23 @@ class ToTensor(object):
             image = image.float()
         return image
     
+# 사용자 정의 변환: Numpy Array를 Resize
+class ResizeNumpyArray:
+    def __init__(self, output_size):
+        self.output_size = output_size  # 원하는 크기 (width, height)
+
+    def __call__(self, image):
+        """
+        Args:
+            image (numpy.ndarray): Input image in numpy format.
+        Returns:
+            numpy.ndarray: Resized image.
+        """
+        if isinstance(image, np.ndarray):
+            return cv2.resize(image, self.output_size)
+        else:
+            raise TypeError("Input must be a numpy array")
+
     
 class Normalize(object):
     """
@@ -37,25 +54,46 @@ def get_data_transforms(size, isize):
         transforms.ToTensor()])
     return data_transforms, gt_transforms
 
-
+def get_inference_data_transforms(size, isize):
+    data_transforms = transforms.Compose([
+        ResizeNumpyArray((size, size)),
+        Normalize(),
+        ToTensor()])
+    gt_transforms = transforms.Compose([
+        transforms.Resize((size, size)),
+        transforms.ToTensor()])
+    return data_transforms, gt_transforms
 
 class MVTecDataset_train(torch.utils.data.Dataset):
-    def __init__(self, root, transform):
+    def __init__(self, root, transform, synth_path = None):
         self.img_path = root
         self.simplexNoise = Simplex_CLASS()
         self.transform = transform
         # load dataset
         self.img_paths = self.load_dataset()  # self.labels => good : 0, anomaly : 1
+        
+        if synth_path is None:
+            self.synth_len = 0
+        else:
+            self.synth_pass = sorted(glob.glob(os.path.join(synth_path, 'pass') + "/*.png"))
+            self.synth_fail = sorted(glob.glob(os.path.join(synth_path, 'fail') + "/*.png"))
+            self.synth_len = len(self.synth_pass)
+
+        print(f"Synthetic data: {self.synth_len}")
 
     def load_dataset(self):
         img_paths = glob.glob(os.path.join(self.img_path, 'good') + "/*.png")
         return img_paths
 
     def __len__(self):
-        return len(self.img_paths)
+        return len(self.synth_pass) + len(self.img_paths)
 
     def __getitem__(self, idx):
-        img_path = self.img_paths[idx]
+        if idx < self.synth_len:
+            img_path = self.synth_pass[idx]
+        else:
+            img_path = self.img_paths[idx-self.synth_len]
+
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img= cv2.resize(img/255., (256, 256))
@@ -71,8 +109,19 @@ class MVTecDataset_train(torch.utils.data.Dataset):
         simplex_noise = self.simplexNoise.rand_3d_octaves((3, *noise_size), 6, 0.6)
         init_zero = np.zeros((256,256,3))
         init_zero[start_h_noise: start_h_noise + h_noise, start_w_noise: start_w_noise+w_noise, :] = 0.2 * simplex_noise.transpose(1,2,0)
-        img_noise = img + init_zero
+
+        if idx < self.synth_len:
+            img_noise = cv2.imread(self.synth_fail[idx])
+            img_noise = cv2.cvtColor(img_noise, cv2.COLOR_BGR2RGB)
+            # 3D anomaly + noise
+            # img_noise = cv2.resize(img_noise/255., (256, 256)) + init_zero
+            # only 3D anomaly
+            img_noise = cv2.resize(img_noise/255., (256, 256))
+        else:
+            img_noise = img + init_zero
+
         img_noise = self.transform(img_noise)
+
         return img_normal,img_noise,img_path.split('/')[-1]
 
 
@@ -122,8 +171,8 @@ class MVTecDataset_test(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         img_path, gt, label, img_type = self.img_paths[idx], self.gt_paths[idx], self.labels[idx], self.types[idx]
         img = cv2.imread(img_path)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img= cv2.resize(img/255., (256, 256))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)/255.
+        img= cv2.resize(img, (256, 256))
         ## Normal
         img = self.transform(img)
         ## simplex_noise
@@ -134,7 +183,7 @@ class MVTecDataset_test(torch.utils.data.Dataset):
             gt = Image.open(gt)
             gt = self.gt_transform(gt)
 
-        assert img.shape[1:] == gt.shape[1:], "image.size != gt.size !!!"
+        assert img.shape[1:] == gt.shape[1:], f"image.size != gt.size !!!, {img.shape[1:]}, {gt.shape[1:]}"
 
         return (img, gt, label, img_type, img_path.split('/')[-1])
 

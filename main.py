@@ -19,6 +19,8 @@ from utils.utils_test import evaluation_multi_proj
 from utils.utils_train import MultiProjectionLayer, Revisit_RDLoss, loss_fucntion
 from dataset.dataset import MVTecDataset_test, MVTecDataset_train, get_data_transforms
 
+import wandb
+
 def setup_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -30,6 +32,7 @@ def setup_seed(seed):
 def get_args():
     parser = ArgumentParser()
     parser.add_argument('--save_folder', default = './RD++_checkpoint_result', type=str)
+    parser.add_argument('--synth_folder', default = None, type=str)
     parser.add_argument('--batch_size', default = 16, type=int)
     parser.add_argument('--image_size', default = 256, type=int)
     parser.add_argument('--detail_training', default='note', type = str)
@@ -47,13 +50,13 @@ def train(_class_, pars):
 
     data_transform, gt_transform = get_data_transforms(pars.image_size, pars.image_size)
     
-    train_path = '/content/' + _class_ + '/train'
-    test_path = '/content/' + _class_
+    train_path = '../../datasets/mvtec/' + _class_ + '/train'
+    test_path = '../../datasets/mvtec/' + _class_
     
     if not os.path.exists(pars.save_folder + '/' + _class_):
         os.makedirs(pars.save_folder + '/' + _class_)
     save_model_path  = pars.save_folder + '/' + _class_ + '/' + 'wres50_'+_class_+'.pth'
-    train_data = MVTecDataset_train(root=train_path, transform=data_transform)
+    train_data = MVTecDataset_train(root=train_path, transform=data_transform, synth_path=pars.synth_folder)
     test_data = MVTecDataset_test(root=test_path, transform=data_transform, gt_transform=gt_transform)
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=pars.batch_size, shuffle=True)
     test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
@@ -166,7 +169,15 @@ def train(_class_, pars):
         loss_distill.append(loss_distill_running)
         total_loss.append(total_loss_running)
         
-        
+        wandb.log({
+            'auroc_px': auroc_px, 
+            'auroc_sp': auroc_sp, 
+            'aupro_px': aupro_px, 
+            'loss_proj': loss_proj_running, 
+            'loss_distill': loss_distill_running, 
+            'total_loss': total_loss_running
+            })
+
         figure = plt.gcf() # get current figure
         figure.set_size_inches(8, 12)
         fig, ax = plt.subplots(3,2, figsize = (8, 12))
@@ -204,7 +215,13 @@ def train(_class_, pars):
             history_infor['auroc_px'] = best_auroc_px
             history_infor['aupro_px'] = best_aupro_px
             history_infor['epoch'] = best_epoch
-            with open(os.path.join(pars.save_folder + '/' + _class_, f'history.json'), 'w') as f:
+            history_path = os.path.join(pars.save_folder + '/' + _class_, 'history.json')
+            # if os.path.exists(history_path):
+            #     with open(history_path, 'r') as f:
+            #         existing_history = json.load(f)
+            #     existing_history.update(history_infor)
+            #     history_infor = existing_history
+            with open(history_path, 'w') as f:
                 json.dump(history_infor, f)
     return best_auroc_sp, best_auroc_px, best_aupro_px
 
@@ -213,6 +230,14 @@ def train(_class_, pars):
 
 if __name__ == '__main__':
     pars = get_args()
+    # Initialize wandb project
+    wandb.init(
+        project=f'RD++_{"_".join(pars.classes)}',
+        name=f'{os.path.basename(pars.save_folder)}',
+        config=pars
+    )
+    config = wandb.config
+
     print('Training with classes: ', pars.classes)
     all_classes = [ 'carpet','grid','leather','tile','wood','bottle','cable','capsule','hazelnut','metal_nut','pill','screw','toothbrush','transistor','zipper']
     setup_seed(111)
