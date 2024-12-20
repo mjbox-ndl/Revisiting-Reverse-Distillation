@@ -31,6 +31,7 @@ def setup_seed(seed):
 
 def get_args():
     parser = ArgumentParser()
+    parser.add_argument('--data_folder', default = '/media/nvme0n1p1/datasets/mvtec/', type=str)
     parser.add_argument('--save_folder', default = './RD++_checkpoint_result', type=str)
     parser.add_argument('--synth_folder', default = None, type=str)
     parser.add_argument('--batch_size', default = 16, type=int)
@@ -50,8 +51,8 @@ def train(_class_, pars):
 
     data_transform, gt_transform = get_data_transforms(pars.image_size, pars.image_size)
     
-    train_path = '../../datasets/mvtec/' + _class_ + '/train'
-    test_path = '../../datasets/mvtec/' + _class_
+    train_path = os.path.join(pars.data_folder, _class_, '/train')
+    test_path = os.path.join(pars.data_folder, _class_)
     
     if not os.path.exists(pars.save_folder + '/' + _class_):
         os.makedirs(pars.save_folder + '/' + _class_)
