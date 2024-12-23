@@ -31,7 +31,8 @@ def setup_seed(seed):
 
 def get_args():
     parser = ArgumentParser()
-    parser.add_argument('--data_folder', default = '/media/nvme0n1p1/datasets/mvtec/', type=str)
+    parser.add_argument('--synth_num', default = -1, type=int)
+    parser.add_argument('--data_folder', default = '/workspace/datasets/mvtec/', type=str)
     parser.add_argument('--save_folder', default = './RD++_checkpoint_result', type=str)
     parser.add_argument('--synth_folder', default = None, type=str)
     parser.add_argument('--batch_size', default = 16, type=int)
@@ -51,13 +52,14 @@ def train(_class_, pars):
 
     data_transform, gt_transform = get_data_transforms(pars.image_size, pars.image_size)
     
-    train_path = os.path.join(pars.data_folder, _class_, '/train')
+    train_path = os.path.join(pars.data_folder, _class_, 'train')
+    print(train_path)
     test_path = os.path.join(pars.data_folder, _class_)
     
     if not os.path.exists(pars.save_folder + '/' + _class_):
         os.makedirs(pars.save_folder + '/' + _class_)
     save_model_path  = pars.save_folder + '/' + _class_ + '/' + 'wres50_'+_class_+'.pth'
-    train_data = MVTecDataset_train(root=train_path, transform=data_transform, synth_path=pars.synth_folder)
+    train_data = MVTecDataset_train(root=train_path, transform=data_transform, synth_path=pars.synth_folder, synth_num=pars.synth_num)
     test_data = MVTecDataset_test(root=test_path, transform=data_transform, gt_transform=gt_transform)
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=pars.batch_size, shuffle=True)
     test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False)

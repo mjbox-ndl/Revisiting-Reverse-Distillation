@@ -65,7 +65,7 @@ def get_inference_data_transforms(size, isize):
     return data_transforms, gt_transforms
 
 class MVTecDataset_train(torch.utils.data.Dataset):
-    def __init__(self, root, transform, synth_path = None):
+    def __init__(self, root, transform, synth_path = None, synth_num = 100):
         self.img_path = root
         self.simplexNoise = Simplex_CLASS()
         self.transform = transform
@@ -74,23 +74,35 @@ class MVTecDataset_train(torch.utils.data.Dataset):
         
         if synth_path is None:
             self.synth_len = 0
+            self.synth_num = 0
         else:
             self.synth_pass = sorted(glob.glob(os.path.join(synth_path, 'pass') + "/*.png"))
             self.synth_fail = sorted(glob.glob(os.path.join(synth_path, 'fail') + "/*.png"))
             self.synth_len = len(self.synth_pass)
+            assert len(self.synth_pass) == len(self.synth_fail), "Synthetic pass and fail data should have the same number of images"
+            for p, f in zip(self.synth_pass, self.synth_fail):
+                assert os.path.basename(p) == os.path.basename(f), "Synthetic pass and fail data should have the same name"
 
-        print(f"Synthetic data: {self.synth_len}")
+            if synth_num < 0:
+                self.synth_num = self.synth_len
+            else:
+                self.synth_num = min(synth_num, self.synth_len)
+
+        print(f"Real data: {len(self.img_paths)}, Synthetic data: {self.synth_len}, Training Synthetic data: {self.synth_num}")
 
     def load_dataset(self):
         img_paths = glob.glob(os.path.join(self.img_path, 'good') + "/*.png")
         return img_paths
 
     def __len__(self):
-        return len(self.synth_pass) + len(self.img_paths)
+        return self.synth_num + len(self.img_paths)
 
     def __getitem__(self, idx):
-        if idx < self.synth_len:
-            img_path = self.synth_pass[idx]
+
+        synth_idx = 0
+        if idx < self.synth_num:
+            synth_idx = np.random.randint(0, self.synth_len)
+            img_path = self.synth_pass[synth_idx]
         else:
             img_path = self.img_paths[idx-self.synth_len]
 
@@ -110,8 +122,8 @@ class MVTecDataset_train(torch.utils.data.Dataset):
         init_zero = np.zeros((256,256,3))
         init_zero[start_h_noise: start_h_noise + h_noise, start_w_noise: start_w_noise+w_noise, :] = 0.2 * simplex_noise.transpose(1,2,0)
 
-        if idx < self.synth_len:
-            img_noise = cv2.imread(self.synth_fail[idx])
+        if idx < self.synth_num:
+            img_noise = cv2.imread(self.synth_fail[synth_idx])
             img_noise = cv2.cvtColor(img_noise, cv2.COLOR_BGR2RGB)
             # 3D anomaly + noise
             # img_noise = cv2.resize(img_noise/255., (256, 256)) + init_zero
