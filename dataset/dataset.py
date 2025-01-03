@@ -104,7 +104,8 @@ class MVTecDataset_train(torch.utils.data.Dataset):
             synth_idx = np.random.randint(0, self.synth_len)
             img_path = self.synth_pass[synth_idx]
         else:
-            img_path = self.img_paths[idx-self.synth_len]
+            # print(idx, self.synth_len, len(self.img_paths))
+            img_path = self.img_paths[idx-self.synth_num]
 
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)

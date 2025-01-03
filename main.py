@@ -42,6 +42,7 @@ def get_args():
     parser.add_argument('--distill_lr', default = 0.005, type=float)
     parser.add_argument('--weight_proj', default = 0.2, type=float) 
     parser.add_argument('--classes', nargs="+", default=["carpet", "leather"])
+    parser.add_argument('--num_epoch', default = 300, type=int)
     pars = parser.parse_args()
     return pars
 
@@ -61,8 +62,8 @@ def train(_class_, pars):
     save_model_path  = pars.save_folder + '/' + _class_ + '/' + 'wres50_'+_class_+'.pth'
     train_data = MVTecDataset_train(root=train_path, transform=data_transform, synth_path=pars.synth_folder, synth_num=pars.synth_num)
     test_data = MVTecDataset_test(root=test_path, transform=data_transform, gt_transform=gt_transform)
-    train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=pars.batch_size, shuffle=True)
-    test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
+    train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=pars.batch_size, shuffle=True, pin_memory=True)
+    test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False, pin_memory=True)
 
     # Use pretrained ImageNet for encoder
     encoder, bn = wide_resnet50_2(pretrained=True)
@@ -100,30 +101,33 @@ def train(_class_, pars):
     
     if _class_ in ['carpet','leather']:
         num_epoch = 10
-    if _class_ in ['grid','tile']:
+    elif _class_ in ['grid','tile']:
         num_epoch = 260
-    if _class_ in ['wood']:
+    elif _class_ in ['wood']:
         num_epoch = 100   
-    if _class_ in ['cable']:
+    elif _class_ in ['cable']:
         num_epoch = 240
-    if _class_ in ['capsule']:
+    elif _class_ in ['capsule']:
         num_epoch = 300
-    if _class_ in ['hazelnut']:
+    elif _class_ in ['hazelnut']:
         num_epoch = 160
-    if _class_ in ['metal_nut']:
+    elif _class_ in ['metal_nut']:
         num_epoch = 160
-    if _class_ in ['screw']:
+    elif _class_ in ['screw']:
         num_epoch = 280
-    if _class_ in ['toothbrush']:
+    elif _class_ in ['toothbrush']:
         num_epoch = 280
-    if _class_ in ['transistor']:
+    elif _class_ in ['transistor']:
         num_epoch = 300  
-    if _class_ in ['zipper']:
+    elif _class_ in ['zipper']:
         num_epoch = 300
-    if _class_ in ['pill']:
+    elif _class_ in ['pill']:
         num_epoch = 200
-    if _class_ in ['bottle']:
+    elif _class_ in ['bottle']:
         num_epoch = 200
+    else:
+    # if _class_ in ['aiv_screw', 'aiv_stud']:
+        num_epoch = pars.num_epoch
 
     print(f'with class {_class_}, Training with {num_epoch} Epoch')
     
