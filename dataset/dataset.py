@@ -7,6 +7,23 @@ import numpy as np
 from dataset.noise import Simplex_CLASS
 import cv2
 
+class RandomBrightnessContrast:
+    def __init__(self, brightness_range=(0.8, 1.2), contrast_range=(0.8, 1.2)):
+        self.brightness_range = brightness_range
+        self.contrast_range = contrast_range
+
+    def get_random_params(self):
+        # 밝기와 대비를 위한 랜덤 값 생성
+        brightness_factor = torch.empty(1).uniform_(*self.brightness_range).item()
+        contrast_factor = torch.empty(1).uniform_(*self.contrast_range).item()
+        return brightness_factor, contrast_factor
+
+    def __call__(self, img, brightness_factor, contrast_factor):
+        # 동일한 인자를 사용하여 변환
+        img = transforms.functional.adjust_brightness(img, brightness_factor)
+        img = transforms.functional.adjust_contrast(img, contrast_factor)
+        return img
+
 class ToTensor(object):
     def __call__(self, image):
         try:
@@ -65,13 +82,14 @@ def get_inference_data_transforms(size, isize):
     return data_transforms, gt_transforms
 
 class MVTecDataset_train(torch.utils.data.Dataset):
-    def __init__(self, root, transform, synth_path = None, synth_num = 100):
+    def __init__(self, root, transform, synth_path = None, synth_num = 100, augmentation = None):
         self.img_path = root
         self.simplexNoise = Simplex_CLASS()
         self.transform = transform
         # load dataset
         self.img_paths = self.load_dataset()  # self.labels => good : 0, anomaly : 1
-        
+        self.augmentation = augmentation
+
         if synth_path is None:
             self.synth_len = 0
             self.synth_num = 0
@@ -110,6 +128,13 @@ class MVTecDataset_train(torch.utils.data.Dataset):
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img= cv2.resize(img/255., (256, 256))
+
+        if self.augmentation is not None:
+            img = torch.tensor(img).permute(2,0,1)
+            brightness_factor, contrast_factor = self.augmentation.get_random_params()
+            img = self.augmentation(img, brightness_factor, contrast_factor)
+            img = img.permute(1,2,0).numpy()
+
         ## Normal
         img_normal = self.transform(img)
         ## simplex_noise
@@ -199,6 +224,5 @@ class MVTecDataset_test(torch.utils.data.Dataset):
         assert img.shape[1:] == gt.shape[1:], f"image.size != gt.size !!!, {img.shape[1:]}, {gt.shape[1:]}"
 
         return (img, gt, label, img_type, img_path.split('/')[-1])
-
 
 

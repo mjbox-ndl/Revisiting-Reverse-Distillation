@@ -17,7 +17,7 @@ from model.resnet import resnet18, resnet34, resnet50, wide_resnet50_2
 from model.de_resnet import de_resnet18, de_resnet34, de_wide_resnet50_2, de_resnet50
 from utils.utils_test import evaluation_multi_proj
 from utils.utils_train import MultiProjectionLayer, Revisit_RDLoss, loss_fucntion
-from dataset.dataset import MVTecDataset_test, MVTecDataset_train, get_data_transforms
+from dataset.dataset import MVTecDataset_test, MVTecDataset_train, get_data_transforms, RandomBrightnessContrast
 
 import wandb
 
@@ -42,6 +42,8 @@ def get_args():
     parser.add_argument('--distill_lr', default = 0.005, type=float)
     parser.add_argument('--weight_proj', default = 0.2, type=float) 
     parser.add_argument('--classes', nargs="+", default=["carpet", "leather"])
+    parser.add_argument('--brightness_range', nargs="+", default=[])
+    parser.add_argument('--contrast_range', nargs="+", default=[])
     parser.add_argument('--num_epoch', default = 300, type=int)
     pars = parser.parse_args()
     return pars
@@ -60,7 +62,15 @@ def train(_class_, pars):
     if not os.path.exists(pars.save_folder + '/' + _class_):
         os.makedirs(pars.save_folder + '/' + _class_)
     save_model_path  = pars.save_folder + '/' + _class_ + '/' + 'wres50_'+_class_+'.pth'
-    train_data = MVTecDataset_train(root=train_path, transform=data_transform, synth_path=pars.synth_folder, synth_num=pars.synth_num)
+    if pars.brightness_range and pars.contrast_range:
+        brightness = (float(pars.brightness_range[0]), float(pars.brightness_range[1]))
+        contrast = (float(pars.contrast_range[0]), float(pars.contrast_range[1]))
+        augmentation = RandomBrightnessContrast(brightness, contrast)
+        print('augmented', brightness, contrast)
+    else:
+        augmentation = None
+        print('no augmented')
+    train_data = MVTecDataset_train(root=train_path, transform=data_transform, synth_path=pars.synth_folder, synth_num=pars.synth_num, augmentation=augmentation)
     test_data = MVTecDataset_test(root=test_path, transform=data_transform, gt_transform=gt_transform)
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=pars.batch_size, shuffle=True, pin_memory=True)
     test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False, pin_memory=True)

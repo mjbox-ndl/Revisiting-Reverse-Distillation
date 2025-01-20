@@ -9,8 +9,30 @@ from skimage import measure
 from statistics import mean
 from scipy.ndimage import gaussian_filter
 import warnings
+import glob
 
+import os
+import OpenEXR
+import Imath
+import torchvision.transforms as transforms
+from tqdm import tqdm
 
+def save_exr(image_tensor, filename):
+    image_np = image_tensor.numpy().transpose(1, 2, 0)
+    height, width, channels = image_np.shape
+    header = OpenEXR.Header(width, height)
+    half_chan = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
+    if channels == 1:
+        header['channels'] = {'Y': half_chan}
+        exr = OpenEXR.OutputFile(filename, header)
+        exr.writePixels({'Y': image_np[:, :, 0].astype(np.float16).tostring()})
+    elif channels == 3:
+        header['channels'] = dict([(c, half_chan) for c in "RGB"])
+        exr = OpenEXR.OutputFile(filename, header)
+        exr.writePixels({'R': image_np[:, :, 0].astype(np.float16).tostring(),
+                         'G': image_np[:, :, 1].astype(np.float16).tostring(),
+                         'B': image_np[:, :, 2].astype(np.float16).tostring()})
+    exr.close()
 
 warnings.filterwarnings('ignore')
 def cal_anomaly_map(fs_list, ft_list, out_size=224, amap_mode='mul'):
@@ -40,7 +62,8 @@ def show_cam_on_image(img, anomaly_map):
     #    anomaly_map = cv2.applyColorMap(np.uint8(anomaly_map), cv2.COLORMAP_JET)
     cam = np.float32(anomaly_map)/255 + np.float32(img)/255
     cam = cam / np.max(cam)
-    return np.uint8(255 * cam)
+    # return np.uint8(255 * cam)
+    return cam
 
 def min_max_norm(image):
     a_min, a_max = image.min(), image.max()
@@ -52,7 +75,8 @@ def cvt2heatmap(gray):
 
 
 
-def evaluation_multi_proj(encoder,proj,bn, decoder, dataloader,device):
+def evaluation_multi_proj(encoder,proj,bn, decoder, dataloader, device, out_path=None):
+    transform = transforms.ToTensor()
     encoder.eval()
     proj.eval()
     bn.eval()
@@ -63,7 +87,7 @@ def evaluation_multi_proj(encoder,proj,bn, decoder, dataloader,device):
     pr_list_sp = []
     aupro_list = []
     with torch.no_grad():
-        for (img, gt, label, _, _) in dataloader:
+        for i, (img, gt, label, _, _) in enumerate(tqdm(dataloader)):
 
             img = img.to(device)
             inputs = encoder(img)
@@ -81,10 +105,87 @@ def evaluation_multi_proj(encoder,proj,bn, decoder, dataloader,device):
             gt_list_sp.append(np.max(gt.cpu().numpy().astype(int)))
             pr_list_sp.append(np.max(anomaly_map))
 
+            if out_path is not None:
+                cam = show_cam_on_image(img[0].cpu(), anomaly_map)
+                cam = torch.from_numpy(cam)
+                save_exr(cam, os.path.join(out_path, f'cam_{i}.exr'))
+
+                hitmap = cvt2heatmap(anomaly_map*255)/255.0
+                hitmap = torch.from_numpy(hitmap).permute(2, 0, 1)
+
+                save_exr(hitmap, os.path.join(out_path, f'hitmap_{i}.exr'))
+                color = img[0].cpu()
+                # color = color - color.min()
+                # color = color / color.max()
+                save_exr(color, os.path.join(out_path, f'img_{i}.exr'))
+                save_exr(gt[0].cpu(), os.path.join(out_path, f'gt_{i}.exr'))
+                admap = transform(anomaly_map)
+                save_exr(admap, os.path.join(out_path, f'pred_{i}.exr'))
+
         auroc_px = round(roc_auc_score(gt_list_px, pr_list_px), 4)
         auroc_sp = round(roc_auc_score(gt_list_sp, pr_list_sp), 4)
     return auroc_px, auroc_sp, round(np.mean(aupro_list),4)
 
+def generate_pred_file(encoder, proj,bn, decoder, path, img_transform, device):
+    transform = transforms.ToTensor()
+    encoder.eval()
+    proj.eval()
+    bn.eval()
+    decoder.eval()
+    with torch.no_grad():
+        img = cv2.imread(path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = cv2.resize(img/255., (256, 256))
+
+        img_input = img_transform(img)
+        img_input = img_input.to(device).unsqueeze(0)
+        inputs = encoder(img_input)
+        features = proj(inputs)
+        outputs = decoder(bn(features))
+        anomaly_map, _ = cal_anomaly_map(inputs, outputs, img_input.shape[-1], amap_mode='a')
+        anomaly_map = gaussian_filter(anomaly_map, sigma=4)
+        
+        hitmap = cvt2heatmap(anomaly_map*255)/255.0
+        hitmap = torch.from_numpy(hitmap).permute(2, 0, 1)
+
+        return transform(img), img_input[0].cpu(), hitmap, transform(anomaly_map)
+
+def generate_pred(encoder,proj,bn, decoder, path, img_transform, device, out_path=None):
+    transform = transforms.ToTensor()
+    encoder.eval()
+    proj.eval()
+    bn.eval()
+    decoder.eval()
+    with torch.no_grad():
+        path = sorted(glob.glob(os.path.join(path) + "/*.png"))
+        print(len(path))
+        for i, p in enumerate(tqdm(path)):
+            img = cv2.imread(p)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = cv2.resize(img/255., (256, 256))
+            img = img_transform(img)
+            img = img.to(device).unsqueeze(0)
+            inputs = encoder(img)
+            features = proj(inputs)
+            outputs = decoder(bn(features))
+            anomaly_map, _ = cal_anomaly_map(inputs, outputs, img.shape[-1], amap_mode='a')
+            anomaly_map = gaussian_filter(anomaly_map, sigma=4)
+            
+            if out_path is not None:
+                cam = show_cam_on_image(img[0].cpu(), anomaly_map)
+                cam = torch.from_numpy(cam)
+                save_exr(cam, os.path.join(out_path, f'cam_{i}.exr'))
+
+                hitmap = cvt2heatmap(anomaly_map*255)/255.0
+                hitmap = torch.from_numpy(hitmap).permute(2, 0, 1)
+                save_exr(hitmap, os.path.join(out_path, f'hitmap_{i}.exr'))
+
+                color = img[0].cpu()
+                # color = color - color.min()
+                # color = color / color.max()
+                save_exr(color, os.path.join(out_path, f'img_{i}.exr'))
+                admap = transform(anomaly_map)
+                save_exr(admap, os.path.join(out_path, f'pred_{i}.exr'))
 
 def compute_pro(masks: ndarray, amaps: ndarray, num_th: int = 200) -> None:
 
