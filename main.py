@@ -72,8 +72,8 @@ def train(_class_, pars):
         print('no augmented')
     train_data = MVTecDataset_train(root=train_path, transform=data_transform, synth_path=pars.synth_folder, synth_num=pars.synth_num, augmentation=augmentation)
     test_data = MVTecDataset_test(root=test_path, transform=data_transform, gt_transform=gt_transform)
-    train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=pars.batch_size, shuffle=True, pin_memory=True)
-    test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False, pin_memory=True)
+    train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=pars.batch_size, shuffle=True)
+    test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
 
     # Use pretrained ImageNet for encoder
     encoder, bn = wide_resnet50_2(pretrained=True)
