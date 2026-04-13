@@ -31,6 +31,7 @@ def setup_seed(seed):
 
 def get_args():
     parser = ArgumentParser()
+    parser.add_argument('--real_num', default = -1, type=int)
     parser.add_argument('--synth_num', default = -1, type=int)
     parser.add_argument('--data_folder', default = '/workspace/datasets/mvtec/', type=str)
     parser.add_argument('--save_folder', default = './RD++_checkpoint_result', type=str)
@@ -45,6 +46,10 @@ def get_args():
     parser.add_argument('--brightness_range', nargs="+", default=[])
     parser.add_argument('--contrast_range', nargs="+", default=[])
     parser.add_argument('--num_epoch', default = 300, type=int)
+    parser.add_argument('--num_eval_epoch', default = 1, type=int)
+    parser.add_argument('--num_eval_epoch_start', default = 0, type=int)
+    parser.add_argument('--is_adding_noise_for_synth', default = False, type=bool)
+    parser.add_argument('--seed', default = 111, type=int)
     pars = parser.parse_args()
     return pars
 
@@ -56,7 +61,8 @@ def train(_class_, pars):
     data_transform, gt_transform = get_data_transforms(pars.image_size, pars.image_size)
     
     train_path = os.path.join(pars.data_folder, _class_, 'train')
-    print(train_path)
+    print('train_path', train_path)
+    print('synth_folder', pars.synth_folder)
     test_path = os.path.join(pars.data_folder, _class_)
     
     if not os.path.exists(pars.save_folder + '/' + _class_):
@@ -70,7 +76,7 @@ def train(_class_, pars):
     else:
         augmentation = None
         print('no augmented')
-    train_data = MVTecDataset_train(root=train_path, transform=data_transform, synth_path=pars.synth_folder, synth_num=pars.synth_num, augmentation=augmentation)
+    train_data = MVTecDataset_train(root=train_path, transform=data_transform, real_num=pars.real_num, synth_path=pars.synth_folder, synth_num=pars.synth_num, augmentation=augmentation, is_adding_noise_for_synth=pars.is_adding_noise_for_synth)
     test_data = MVTecDataset_test(root=test_path, transform=data_transform, gt_transform=gt_transform)
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=pars.batch_size, shuffle=True, pin_memory=True)
     test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False, pin_memory=True)
@@ -141,6 +147,9 @@ def train(_class_, pars):
 
     print(f'with class {_class_}, Training with {num_epoch} Epoch')
     
+    with open(os.path.join(pars.save_folder, _class_, 'auroc_sp_list.txt'), 'w') as f:
+        f.write(f'epoch, auroc_sp\n')
+
     for epoch in tqdm(range(1,num_epoch+1)):
         bn.train()
         proj_layer.train()
@@ -177,69 +186,73 @@ def train(_class_, pars):
             loss_proj_running += L_proj.detach().cpu().item()
             loss_distill_running += L_distill.detach().cpu().item()
             
-
-        auroc_px, auroc_sp, aupro_px = evaluation_multi_proj(encoder, proj_layer, bn, decoder, test_dataloader, device)        
-        auroc_px_list.append(auroc_px)
-        auroc_sp_list.append(auroc_sp)
-        aupro_px_list.append(aupro_px)
-        loss_proj.append(loss_proj_running)
-        loss_distill.append(loss_distill_running)
-        total_loss.append(total_loss_running)
-        
-        wandb.log({
-            'auroc_px': auroc_px, 
-            'auroc_sp': auroc_sp, 
-            'aupro_px': aupro_px, 
-            'loss_proj': loss_proj_running, 
-            'loss_distill': loss_distill_running, 
-            'total_loss': total_loss_running
-            })
-
-        figure = plt.gcf() # get current figure
-        figure.set_size_inches(8, 12)
-        fig, ax = plt.subplots(3,2, figsize = (8, 12))
-        ax[0][0].plot(auroc_px_list)
-        ax[0][0].set_title('auroc_px')
-        ax[0][1].plot(auroc_sp_list)
-        ax[0][1].set_title('auroc_sp')
-        ax[1][0].plot(aupro_px_list)
-        ax[1][0].set_title('aupro_px')
-        ax[1][1].plot(loss_proj)
-        ax[1][1].set_title('loss_proj')
-        ax[2][0].plot(loss_distill)
-        ax[2][0].set_title('loss_distill')
-        ax[2][1].plot(total_loss)
-        ax[2][1].set_title('total_loss')
-        plt.savefig(pars.save_folder + '/' + _class_ + '/monitor_traning.png', dpi = 100)
-    
-        
-        print('Epoch {}, Sample Auroc: {:.4f}, Pixel Auroc:{:.4f}, Pixel Aupro: {:.4f}'.format(epoch, auroc_sp, auroc_px, aupro_px))
-    
-
-        if (auroc_px + auroc_sp + aupro_px) / 3 > best_score:
-            best_score = (auroc_px + auroc_sp + aupro_px) / 3
+        if epoch % pars.num_eval_epoch == 0 and epoch >= pars.num_eval_epoch_start:
+            auroc_px, auroc_sp, aupro_px = evaluation_multi_proj(encoder, proj_layer, bn, decoder, test_dataloader, device)        
+            auroc_px_list.append(auroc_px)
+            auroc_sp_list.append(auroc_sp)
+            aupro_px_list.append(aupro_px)
+            loss_proj.append(loss_proj_running)
+            loss_distill.append(loss_distill_running)
+            total_loss.append(total_loss_running)
             
-            best_auroc_px = auroc_px
-            best_auroc_sp = auroc_sp
-            best_aupro_px = aupro_px
-            best_epoch = epoch
+            wandb.log({
+                'epoch': epoch,
+                'auroc_px': auroc_px, 
+                'auroc_sp': auroc_sp, 
+                'aupro_px': aupro_px, 
+                'loss_proj': loss_proj_running, 
+                'loss_distill': loss_distill_running, 
+                'total_loss': total_loss_running
+                })
 
-            torch.save({'proj': proj_layer.state_dict(),
-                       'decoder': decoder.state_dict(),
-                        'bn':bn.state_dict()}, save_model_path)
+            figure = plt.gcf() # get current figure
+            figure.set_size_inches(8, 12)
+            fig, ax = plt.subplots(3,2, figsize = (8, 12))
+            ax[0][0].plot(auroc_px_list)
+            ax[0][0].set_title('auroc_px')
+            ax[0][1].plot(auroc_sp_list)
+            ax[0][1].set_title('auroc_sp')
+            ax[1][0].plot(aupro_px_list)
+            ax[1][0].set_title('aupro_px')
+            ax[1][1].plot(loss_proj)
+            ax[1][1].set_title('loss_proj')
+            ax[2][0].plot(loss_distill)
+            ax[2][0].set_title('loss_distill')
+            ax[2][1].plot(total_loss)
+            ax[2][1].set_title('total_loss')
+            plt.savefig(pars.save_folder + '/' + _class_ + '/monitor_traning.png', dpi = 100)
 
-            history_infor['auroc_sp'] = best_auroc_sp
-            history_infor['auroc_px'] = best_auroc_px
-            history_infor['aupro_px'] = best_aupro_px
-            history_infor['epoch'] = best_epoch
-            history_path = os.path.join(pars.save_folder + '/' + _class_, 'history.json')
-            # if os.path.exists(history_path):
-            #     with open(history_path, 'r') as f:
-            #         existing_history = json.load(f)
-            #     existing_history.update(history_infor)
-            #     history_infor = existing_history
-            with open(history_path, 'w') as f:
-                json.dump(history_infor, f)
+            # Save auroc_sp_list as txt file
+            with open(os.path.join(pars.save_folder, _class_, 'auroc_sp_list.txt'), 'a') as f:
+                f.write(f'{epoch}, {auroc_sp}\n')
+            
+            print('Epoch {}, Sample Auroc: {:.4f}, Pixel Auroc:{:.4f}, Pixel Aupro: {:.4f}'.format(epoch, auroc_sp, auroc_px, aupro_px))
+        
+
+            if (auroc_px + auroc_sp + aupro_px) / 3 > best_score:
+                best_score = (auroc_px + auroc_sp + aupro_px) / 3
+                
+                best_auroc_px = auroc_px
+                best_auroc_sp = auroc_sp
+                best_aupro_px = aupro_px
+                best_epoch = epoch
+
+                torch.save({'proj': proj_layer.state_dict(),
+                        'decoder': decoder.state_dict(),
+                            'bn':bn.state_dict()}, save_model_path)
+
+                history_infor['auroc_sp'] = best_auroc_sp
+                history_infor['auroc_px'] = best_auroc_px
+                history_infor['aupro_px'] = best_aupro_px
+                history_infor['epoch'] = best_epoch
+                history_path = os.path.join(pars.save_folder + '/' + _class_, 'history.json')
+                # if os.path.exists(history_path):
+                #     with open(history_path, 'r') as f:
+                #         existing_history = json.load(f)
+                #     existing_history.update(history_infor)
+                #     history_infor = existing_history
+                with open(history_path, 'w') as f:
+                    json.dump(history_infor, f)
     return best_auroc_sp, best_auroc_px, best_aupro_px
 
 
@@ -257,7 +270,7 @@ if __name__ == '__main__':
 
     print('Training with classes: ', pars.classes)
     all_classes = [ 'carpet','grid','leather','tile','wood','bottle','cable','capsule','hazelnut','metal_nut','pill','screw','toothbrush','transistor','zipper']
-    setup_seed(111)
+    setup_seed(pars.seed)
     metrics = {'class': [], 'AUROC_sample':[], 'AUROC_pixel': [], 'AUPRO_pixel': []}
     
     # train all_classes

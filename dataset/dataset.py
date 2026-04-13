@@ -82,13 +82,14 @@ def get_inference_data_transforms(size, isize):
     return data_transforms, gt_transforms
 
 class MVTecDataset_train(torch.utils.data.Dataset):
-    def __init__(self, root, transform, synth_path = None, synth_num = 100, augmentation = None):
+    def __init__(self, root, transform, real_num=-1, synth_path = None, synth_num = 100, augmentation = None, is_adding_noise_for_synth = False):
         self.img_path = root
         self.simplexNoise = Simplex_CLASS()
         self.transform = transform
         # load dataset
-        self.img_paths = self.load_dataset()  # self.labels => good : 0, anomaly : 1
+        self.img_paths = self.load_dataset(real_num)  # self.labels => good : 0, anomaly : 1
         self.augmentation = augmentation
+        self.is_adding_noise_for_synth = is_adding_noise_for_synth
 
         if synth_path is None:
             self.synth_len = 0
@@ -108,8 +109,12 @@ class MVTecDataset_train(torch.utils.data.Dataset):
 
         print(f"Real data: {len(self.img_paths)}, Synthetic data: {self.synth_len}, Training Synthetic data: {self.synth_num}")
 
-    def load_dataset(self):
+    def load_dataset(self, real_num=-1):
         img_paths = glob.glob(os.path.join(self.img_path, 'good') + "/*.png")
+        if real_num == 0:
+            img_paths = []
+        elif real_num > 0 and real_num < len(img_paths):
+            img_paths = img_paths[:real_num]
         return img_paths
 
     def __len__(self):
@@ -119,7 +124,8 @@ class MVTecDataset_train(torch.utils.data.Dataset):
 
         synth_idx = 0
         if idx < self.synth_num:
-            synth_idx = np.random.randint(0, self.synth_len)
+            # synth_idx = np.random.randint(0, self.synth_len)
+            synth_idx = np.random.randint(0, len(self.synth_pass))
             img_path = self.synth_pass[synth_idx]
         else:
             # print(idx, self.synth_len, len(self.img_paths))
@@ -155,6 +161,8 @@ class MVTecDataset_train(torch.utils.data.Dataset):
             # img_noise = cv2.resize(img_noise/255., (256, 256)) + init_zero
             # only 3D anomaly
             img_noise = cv2.resize(img_noise/255., (256, 256))
+            if self.is_adding_noise_for_synth:
+                img_noise = img_noise + init_zero
         else:
             img_noise = img + init_zero
 
@@ -164,14 +172,16 @@ class MVTecDataset_train(torch.utils.data.Dataset):
 
 
 class MVTecDataset_test(torch.utils.data.Dataset):
-    def __init__(self, root, transform, gt_transform):
+    def __init__(self, root, transform, gt_transform, types=['all']):
         self.img_path = os.path.join(root, 'test')
         self.gt_path = os.path.join(root, 'ground_truth')
         self.simplexNoise = Simplex_CLASS()
         self.transform = transform
         self.gt_transform = gt_transform
         # load dataset
+        self.in_types = types
         self.img_paths, self.gt_paths, self.labels, self.types = self.load_dataset()  # self.labels => good : 0, anomaly : 1
+        print(f"Loading dataset with types: {self.in_types}")
 
     def load_dataset(self):
 
@@ -190,14 +200,15 @@ class MVTecDataset_test(torch.utils.data.Dataset):
                 tot_labels.extend([0] * len(img_paths))
                 tot_types.extend(['good'] * len(img_paths))
             else:
-                img_paths = glob.glob(os.path.join(self.img_path, defect_type) + "/*.png")
-                gt_paths = glob.glob(os.path.join(self.gt_path, defect_type) + "/*.png")
-                img_paths.sort()
-                gt_paths.sort()
-                img_tot_paths.extend(img_paths)
-                gt_tot_paths.extend(gt_paths)
-                tot_labels.extend([1] * len(img_paths))
-                tot_types.extend([defect_type] * len(img_paths))
+                if ('all' in self.in_types) or (defect_type in self.in_types):
+                    img_paths = glob.glob(os.path.join(self.img_path, defect_type) + "/*.png")
+                    gt_paths = glob.glob(os.path.join(self.gt_path, defect_type) + "/*.png")
+                    img_paths.sort()
+                    gt_paths.sort()
+                    img_tot_paths.extend(img_paths)
+                    gt_tot_paths.extend(gt_paths)
+                    tot_labels.extend([1] * len(img_paths))
+                    tot_types.extend([defect_type] * len(img_paths))
 
         assert len(img_tot_paths) == len(gt_tot_paths), "Something wrong with test and ground truth pair!"
 

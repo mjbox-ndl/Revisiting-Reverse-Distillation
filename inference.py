@@ -9,7 +9,7 @@ from model.de_resnet import de_wide_resnet50_2
 from utils.utils_test import evaluation_multi_proj, generate_pred
 from utils.utils_train import MultiProjectionLayer
 from dataset.dataset import MVTecDataset_test, get_data_transforms, get_inference_data_transforms
-
+import json
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -26,6 +26,9 @@ def get_args():
     parser.add_argument('--image_size', default = 256, type=int)
     parser.add_argument('--classes', nargs="+", default=["carpet", "leather"])
     parser.add_argument('--output_folder', default=None, type=str)
+    parser.add_argument('--experiment_name', default="test", type=str)
+    parser.add_argument('--types', nargs="+", default=["all"], type=str)
+
     pars = parser.parse_args()
     return pars
 
@@ -49,19 +52,41 @@ def load_model(_class_, device, pars):
 def inference(_class_, pars):
     if not os.path.exists(pars.checkpoint_folder):
         os.makedirs(pars.checkpoint_folder)
+    
+    if not os.path.exists(pars.output_folder):
+        os.makedirs(pars.output_folder)
+    
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     data_transform, gt_transform = get_data_transforms(pars.image_size, pars.image_size)
     
     test_path           = os.path.join(pars.data_folder, _class_)
 
-    test_data = MVTecDataset_test(root=test_path, transform=data_transform, gt_transform=gt_transform)
+    test_data = MVTecDataset_test(root=test_path, transform=data_transform, gt_transform=gt_transform, types=pars.types)
     test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=1, shuffle=False)
 
     encoder, proj_layer, bn, decoder = load_model(_class_, device, pars)
   
     auroc_px, auroc_sp, aupro_px = evaluation_multi_proj(encoder, proj_layer, bn, decoder, test_dataloader, device)        
+    # print('{}: Sample Auroc: {:.4f}, Pixel Auroc:{:.4f}, Pixel Aupro: {:.4f}'.format(_class_, auroc_sp, auroc_px, aupro_px))
     print('{}: Sample Auroc: {:.4f}, Pixel Auroc:{:.4f}, Pixel Aupro: {:.4f}'.format(_class_, auroc_sp, auroc_px, aupro_px))
+    # add write the results to a json file
+    results = {
+        'class': _class_,
+        'checkpoint_folder': pars.checkpoint_folder,
+        'types': pars.types,
+        'auroc_sp': auroc_sp,
+        'auroc_px': auroc_px,
+        'aupro_px': aupro_px
+    }
+    results_list = []
+    if os.path.exists(f'{pars.output_folder}/inference_results.json'):
+        with open(f'{pars.output_folder}/inference_results.json', 'r') as f:
+            results_list = json.load(f)
+    results_list.append(results)
+    with open(f'{pars.output_folder}/inference_results.json', 'w') as f:
+        json.dump(results_list, f, indent=4)
+
     return auroc_sp, auroc_px, aupro_px
 
 def predict(pars, is_real=True):
@@ -99,13 +124,12 @@ if __name__ == '__main__':
 
     item_list = [ 'carpet','grid','leather','tile','wood','bottle','cable','capsule','hazelnut','metal_nut','pill','screw','toothbrush','transistor','zipper']
     setup_seed(111)
-    metrics = {'class': [], 'AUROC_sample':[], 'AUROC_pixel': [], 'AUPRO_pixel': []}
+    metrics = {'class': [], 'AUROC_sample':[], 'AUROC_pixel': []}
     
     for c in pars.classes:
         auroc_sp, auroc_px, aupro_px = inference(c, pars)
         metrics['class'].append(c)
         metrics['AUROC_sample'].append(auroc_sp)
         metrics['AUROC_pixel'].append(auroc_px)
-        metrics['AUPRO_pixel'].append(aupro_px)
         metrics_df = pd.DataFrame(metrics)
-        metrics_df.to_csv(f'{pars.checkpoint_folder}/metrics_checkpoints.csv', index=False)
+        metrics_df.to_csv(f'{pars.output_folder}/{pars.experiment_name}_metrics_checkpoints.csv', index=False)
